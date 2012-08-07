@@ -84,11 +84,11 @@ main = do
 
 checkGitDirectory :: GitAll -> FilePath -> IO ()
 checkGitDirectory opts dir = do
-  debugM "git-all" $ "Scanning " ++ (asText dir)
+  debugM "git-all" $ "Scanning " ++ asText dir
 
   url <- gitMaybe dir "config" ["svn-remote.svn.url"]
 
-  when (fetch opts || fetchonly opts) $ do
+  when (fetch opts || fetchonly opts) $
     gitFetch dir url
 
   unless (fetchonly opts) $ do
@@ -101,7 +101,7 @@ checkGitDirectory opts dir = do
 
 dirAsFile path =
   let dir = toTextIgnore . directory $ path in
-  fromText $ take ((length dir) - 1) dir
+  fromText (init dir)
 
 gitStatus :: FilePath -> Bool -> IO ()
 gitStatus dir untracked = do
@@ -116,7 +116,7 @@ gitFetch :: FilePath -> Maybe Text -> IO ()
 gitFetch dir url = do
   output <-
     if isNothing url
-    then do
+    then
       git dir "fetch" ["-q", "--progress", "--all", "--prune", "--tags"]
 
     else do
@@ -137,7 +137,7 @@ gitLocalBranches dir = do
 
   -- Each line is of the form: "<HASH> commit refs/heads/<NAME>"
   where parseGitRefs (x:xs) =
-          (words' !! 0, drop 11 (words' !! 2)) : parseGitRefs xs
+          (head words', drop 11 (words' !! 2)) : parseGitRefs xs
           where words' = T.words x
         parseGitRefs [] = []
 
@@ -180,7 +180,7 @@ doGit dir com args = do
   run "git" $ [gitDir, workDir, com] ++ args
 
 git :: FilePath -> Text -> [Text] -> IO Text
-git dir com args = do
+git dir com args =
   shelly $ silently $ errExit False $ do
     text <- doGit dir com args
     code <- lastExitCode
@@ -208,7 +208,7 @@ topTen category path content marker =
           ++ (let len = L.length (L.drop 10 ls) in
               case len of
                 0 -> []
-                _ -> ["... (and " , (pack (show len)) , " more)\n"])
+                _ -> ["... (and " , pack (show len) , " more)\n"])
   where ls = lines content
 
 findDirectories :: Chan (Maybe FilePath) -> (FilePath -> Bool) -> [FilePath] -> IO ()
