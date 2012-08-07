@@ -99,9 +99,7 @@ checkGitDirectory opts dir = do
 
 -- Git command wrappers
 
-dirAsFile path =
-  let dir = toTextIgnore . directory $ path in
-  fromText (init dir)
+dirAsFile = fromText . T.init . toTextIgnore . directory
 
 gitStatus :: FilePath -> Bool -> IO ()
 gitStatus dir untracked = do
@@ -137,7 +135,7 @@ gitLocalBranches dir = do
 
   -- Each line is of the form: "<HASH> commit refs/heads/<NAME>"
   where parseGitRefs (x:xs) =
-          (head words', drop 11 (words' !! 2)) : parseGitRefs xs
+          (L.head words', drop 11 (words' !! 2)) : parseGitRefs xs
           where words' = T.words x
         parseGitRefs [] = []
 
