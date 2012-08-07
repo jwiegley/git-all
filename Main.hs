@@ -222,9 +222,8 @@ findDirectories c pred dirs = do
   --    know we're all done.
 
   shelly $ filterM test_d dirs >>=
-    mapM_ (findFold (\_ path -> if pred path
-                                then liftIO . writeChan c . Just $ path
-                                else return ()) ())
+    mapM_ (findFold (\_ path -> when (pred path) $
+                                liftIO . writeChan c . Just $ path) ())
   writeChan c Nothing
 
 asText = unpack . toTextIgnore
