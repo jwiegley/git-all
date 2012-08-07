@@ -203,7 +203,8 @@ topTen _ _ "" _ = ""
 topTen category path content marker =
   T.concat $ [ "\n", marker, " ", category, " ", marker, " "
              , toTextIgnore path, "\n"
-             , unlines (L.take 10 ls) ]
+             -- , unlines (L.take 10 ls)
+             , unlines (L.map (take 80) (L.take 10 ls)) ]
           ++ (let len = L.length (L.drop 10 ls) in
               case len of
                 0 -> []
