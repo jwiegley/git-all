@@ -54,7 +54,7 @@ gitAll = GitAll
     , untracked = def &= name "U" &= help "Display untracked files as possible changes"
     , verbose   = def &= name "v" &= help "Report progress verbosely"
     , debug     = def &= name "D" &= help "Report debug information"
-    , dirs      = def &= opt (fromText ".") &= args &= typ "DIR..." } &=
+    , dirs      = def &= args &= typ "DIR..." } &=
     summary gitAllSummary &=
     program "git-all" &=
     helpArg [explicit, name "h"] &=
@@ -73,8 +73,9 @@ main = do
   -- Do a find in all directories (in sequence) in a separate thread, so that
   -- the list of directories is accumulated while we work on them
   c <- newChan
+  let directories = L.map (fromText . pack) (dirs opts)
   forkIO $ findDirectories c ((".git" ==) . filename)
-                           (L.map (fromText . pack) (dirs opts))
+                           (if L.null directories then ["."] else directories)
 
   -- While readChan keeps returning `Just x', call `checkGitDirectory opts x'.
   -- Once it returns Nothing, findDirectories is done and we can stop
