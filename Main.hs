@@ -11,8 +11,8 @@ module Main where
 --
 -- by John Wiegley <johnw@newartisans.com>
 --
--- A utility for determining which Git repositories need to actions to be
--- taken within them.
+-- A utility for determining which Git repositories need actions to be taken
+-- within them.
 
 import Control.Concurrent.Chan
 import Control.Monad
@@ -20,9 +20,9 @@ import Control.Monad.Loops
 import qualified Data.List as L
 import Data.Maybe
 import Data.Text.Lazy as T
-import Filesystem.Path (FilePath, directory, filename)
+import Filesystem.Path (directory, filename)
 import GHC.Conc
-import Shelly hiding (FilePath)
+import Shelly
 import System.Console.CmdArgs
 import System.Log.Logger
 import Text.Regex.Posix
@@ -43,8 +43,7 @@ data GitAll = GitAll
     , untracked :: Bool
     , verbose   :: Bool
     , debug     :: Bool
-    , dirs      :: [String]
-    }
+    , dirs      :: [String] }
     deriving (Data, Typeable, Show, Eq)
 
 gitAll = GitAll
@@ -55,23 +54,11 @@ gitAll = GitAll
     , untracked = def &= name "U" &= help "Display untracked files as possible changes"
     , verbose   = def &= name "v" &= help "Report progress verbosely"
     , debug     = def &= name "D" &= help "Report debug information"
-
-    , dirs      = def &= opt "." &= args &= typ "DIR..."
-    } &=
+    , dirs      = def &= opt (fromText ".") &= args &= typ "DIR..." } &=
     summary gitAllSummary &=
     program "git-all" &=
     helpArg [explicit, name "h"] &=
     help "Report the status of all Git repositories within a directory tree"
-
-
--- "Impure" aspects of this utility:
---
--- 1. Walking the filesystem to find *.git/config files.
---
--- 2. Reading the config files to discover what type of remote it has
---    (regular, git-svn, git-bzr, gc-update, etc).
---
--- 3. Calling out to git to perform the actual update
 
 main :: IO ()
 main = do
@@ -216,9 +203,7 @@ topTen _ _ "" _ = ""
 topTen category path content marker =
   T.concat $ [ "\n", marker, " ", category, " ", marker, " "
              , toTextIgnore path, "\n"
-             , unlines (L.take 10 ls)
-             -- , unlines (L.map (take 80) (L.take 10 ls))
-             ]
+             , unlines (L.take 10 ls) ]
           ++ (let len = L.length (L.drop 10 ls) in
               case len of
                 0 -> []

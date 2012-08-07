@@ -3,7 +3,7 @@ Name: git-all
 Version:  1.0.0
 Synopsis: Determine which Git repositories need to actions to be taken
 
-Description: A utility for determining which Git repositories need to actions to be
+Description: A utility for determining which Git repositories need actions to be
              taken within them.
 
 Homepage:           https://github.com/jwiegley/git-all
