@@ -14,31 +14,21 @@ module Main where
 -- A utility for determining which Git repositories need to actions to be
 -- taken within them.
 
-import Control.Concurrent
 import Control.Concurrent.Chan
 import Control.Monad
 import Control.Monad.Loops
-import Data.Char
-import Data.Function
+import qualified Data.List as L
 import Data.Maybe
+import Data.Text.Lazy as T
 import Filesystem.Path (FilePath, directory, filename)
 import GHC.Conc
-import System.Console.CmdArgs
-import System.Directory
-import System.Environment
-import System.Exit
-import System.IO hiding (FilePath)
-import System.IO.Storage
-import System.Log.Logger
-import System.Process
-import System.Time
-import qualified Data.List as L
-import qualified Control.Exception as C
-
 import Shelly hiding (FilePath)
-import Data.Text.Lazy as T
+import System.Console.CmdArgs
+import System.Log.Logger
 import Text.Regex.Posix
-import Prelude hiding (FilePath, drop, replicate, lines, take, length, unlines, map)
+
+import Prelude
+  hiding (FilePath, drop, replicate, lines, take, length, unlines, map)
 default (T.Text)
 
 version       = "1.0.0"
@@ -108,19 +98,21 @@ checkGitDirectory :: GitAll -> FilePath -> IO ()
 checkGitDirectory opts dir = do
   debugM "git-all" $ "Scanning " ++ (asText dir)
 
+  url <- gitMaybe dir "config" ["svn-remote.svn.url"]
+
   when (fetch opts || fetchonly opts) $ do
-    gitFetch dir
+    gitFetch dir url
 
   unless (fetchonly opts) $ do
     branches <- gitLocalBranches dir
-    mapM_ (gitPushOrPull dir) branches
+    mapM_ (gitPushOrPull dir url (pulls opts)) branches
 
-    gitStatus dir (fetch opts) (untracked opts)
+    gitStatus dir (untracked opts)
 
 -- Git command wrappers
 
-gitStatus :: FilePath -> Bool -> Bool -> IO ()
-gitStatus dir fetch untracked = do
+gitStatus :: FilePath -> Bool -> IO ()
+gitStatus dir untracked = do
   changes <-
     git dir "status"
         [ "--porcelain"
@@ -128,69 +120,66 @@ gitStatus dir fetch untracked = do
 
   putStr $ unpack $ topTen "STATUS" (directory dir) changes "=="
 
-gitFetch :: FilePath -> IO ()
-gitFetch dir = do
-  url    <- gitConfig dir "svn-remote.svn.url"
+gitFetch :: FilePath -> Maybe Text -> IO ()
+gitFetch dir url = do
   output <-
     if isNothing url
     then do
-      git dir "fetch" [ "-q", "--progress", "--all", "--prune", "--tags" ]
+      git dir "fetch" ["-q", "--progress", "--all", "--prune", "--tags"]
 
     else do
-      out <- git dir "svn" [ "fetch" ]
+      out <- git dir "svn" ["fetch"]
       -- jww (2012-08-06): Why doesn't =~ work on Data.Text.Lazy.Text?
       let pat = unpack "^(W: |This may take a while|Checked through|$)"
       return $ unlines $ L.filter (not . (=~ pat) . unpack) (lines out)
 
   putStr $ unpack $ topTen "FETCH" (directory dir) output "=="
 
-gitPushOrPull :: FilePath -> Text -> IO ()
-gitPushOrPull dir branch = do
-  -- jww (2012-08-07): NYI.  The Ruby code to be ported:
-  -- remote = g.config["branch.#{branch.name}.remote"] || git_svn_repo(g)
-  -- if remote
-  --   remote_sha =
-  --     if git_svn_repo(g)
-  --       g.revparse 'trunk' rescue g.revparse 'git-svn'
-  --     else
-  --       g.revparse File.join(remote, branch.name)
-  --     end
-  --
-  --   if branch.gcommit.sha != remote_sha
-  --     git_log = "git --git-dir='#{@git_dir}' log --no-merges --oneline"
-  --
-  --     out = `#{git_log} #{remote_sha}..#{branch.gcommit.sha}`
-  --     top_ten('NEED PUSH', "#{working_dir}\##{branch.name}",
-  --         out.split("\n"), true)
-  --
-  --     if $params[:pulls].value
-  --       out = `#{git_log} #{branch.gcommit.sha}..#{remote_sha}`
-  --       top_ten('NEED PULL', "#{working_dir}\##{branch.name}",
-  --           out.split("\n"), true)
-  --     end
-  --   end
-  -- end
-  putStrLn $ "Push or pull " ++ (asText dir) ++ "#" ++ (unpack branch)
+type CommitId = Text
+type BranchInfo = (CommitId, Text)
 
-gitLocalBranches :: FilePath -> IO [Text]
+gitLocalBranches :: FilePath -> IO [BranchInfo]
 gitLocalBranches dir = do
   output <- git dir "for-each-ref" ["refs/heads/"]
   return $ parseGitRefs (lines output)
 
   -- Each line is of the form: "<HASH> commit refs/heads/<NAME>"
-  where parseGitRefs (x:xs) = drop 11 (T.words x !! 2) : parseGitRefs xs
+  where parseGitRefs (x:xs) =
+          (words' !! 0, drop 11 (words' !! 2)) : parseGitRefs xs
+          where words' = T.words x
         parseGitRefs [] = []
 
--- Utility functions
+gitPushOrPull :: FilePath -> Maybe Text -> Bool -> BranchInfo -> IO ()
+gitPushOrPull dir url pulls branch = do
+  remote <-
+    gitMaybe dir "config" [T.concat ["branch.", snd branch, ".remote"]]
 
-gitConfig :: FilePath -> Text -> IO (Maybe Text)
-gitConfig dir option =
-  shelly $ silently $ errExit False $ do
-    text <- doGit dir "config" [option]
-    code <- lastExitCode
-    if code == 0
-      then return (Just text)
-      else return Nothing
+  when (isJust remote || isJust url) $ do
+    let branchName = T.concat [fromJust remote, "/", snd branch]
+    remoteSha <- if isJust remote
+                 then
+                   gitMaybe dir "rev-parse" [branchName]
+                 else do
+                   trunk <- gitMaybe dir "rev-parse" ["trunk"]
+                   case trunk of
+                     Nothing -> gitMaybe dir "rev-parse" ["git-svn"]
+                     Just _  -> return trunk
+
+    when (isJust remoteSha && fst branch /= fromJust remoteSha) $ do
+      let logArgs     = ["--no-merges", "--oneline"]
+          branchLabel = T.concat [toTextIgnore (directory dir), "#", snd branch]
+          sha         = fromJust remoteSha
+
+      pushLog <- git dir "log" (   logArgs
+                                ++ [T.concat [sha, "..", fst branch], "--"])
+      putStr $ unpack $ topTen "NEED PUSH" (fromText branchLabel) pushLog "=="
+
+      when pulls $ do
+        pullLog <- git dir "log" (   logArgs
+                                  ++ [T.concat [fst branch, "..", sha], "--"])
+        putStr $ unpack $ topTen "NEED PULL" (fromText branchLabel) pullLog "=="
+
+-- Utility functions
 
 doGit :: FilePath -> Text -> [Text] -> Sh Text
 doGit dir com args = do
@@ -208,24 +197,36 @@ git dir com args = do
       liftIO $ putStr $ unpack $ topTen "FAILED" (directory dir) err "##"
     return text
 
+gitMaybe :: FilePath -> Text -> [Text] -> IO (Maybe Text)
+gitMaybe dir cmd args =
+  shelly $ silently $ errExit False $ do
+    text <- doGit dir cmd args
+    code <- lastExitCode
+    if code == 0
+      then return . Just . L.head . lines $ text
+      else return Nothing
+
 topTen :: Text -> FilePath -> Text -> Text -> Text
 topTen _ _ "" _ = ""
 topTen category path content marker =
   T.concat $ [ "\n", marker, " ", category, " ", marker, " "
-             , (toTextIgnore path), "\n"
-             , (unlines (L.map (take 80) (L.take 10 ls))) ]
+             , toTextIgnore path, "\n"
+             , unlines (L.take 10 ls)
+             -- , unlines (L.map (take 80) (L.take 10 ls))
+             ]
           ++ (let len = L.length (L.drop 10 ls) in
               case len of
                 0 -> []
-                _ -> [ "... (and " , (pack (show len)) , " more)\n" ])
+                _ -> ["... (and " , (pack (show len)) , " more)\n"])
   where ls = lines content
 
 findDirectories :: Chan (Maybe FilePath) -> FilePath -> [FilePath] -> IO ()
-findDirectories c name dirs =
-  forM_ dirs $ \dir -> do
+findDirectories c name dirs = do
+  validDirs <- shelly $ filterM test_d dirs
+  forM_ validDirs $ \dir -> do
     xs <- shelly $ findByName name dir
     mapM_ (writeChan c . Just) xs
-    writeChan c Nothing
+  writeChan c Nothing
 
 findByName :: FilePath -> FilePath -> Sh [FilePath]
 findByName name = findWhen $ return . (name ==) . filename
