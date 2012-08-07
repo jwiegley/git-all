@@ -86,7 +86,8 @@ main = do
   -- Do a find in all directories (in sequence) in a separate thread, so that
   -- the list of directories is accumulated while we work on them
   c <- newChan
-  forkIO $ findDirectories c ".git" (L.map (fromText . pack) (dirs opts))
+  forkIO $ findDirectories c ((".git" ==) . filename)
+                           (L.map (fromText . pack) (dirs opts))
 
   -- While readChan keeps returning `Just x', call `checkGitDirectory opts x'.
   -- Once it returns Nothing, findDirectories is done and we can stop
@@ -111,6 +112,10 @@ checkGitDirectory opts dir = do
 
 -- Git command wrappers
 
+dirAsFile path =
+  let dir = toTextIgnore . directory $ path in
+  fromText $ take ((length dir) - 1) dir
+
 gitStatus :: FilePath -> Bool -> IO ()
 gitStatus dir untracked = do
   changes <-
@@ -118,7 +123,7 @@ gitStatus dir untracked = do
         [ "--porcelain"
         , append "--untracked-files=" (if untracked then "normal" else "no") ]
 
-  putStr $ unpack $ topTen "STATUS" (directory dir) changes "=="
+  putStr $ unpack $ topTen "STATUS" (dirAsFile dir) changes "=="
 
 gitFetch :: FilePath -> Maybe Text -> IO ()
 gitFetch dir url = do
@@ -133,7 +138,7 @@ gitFetch dir url = do
       let pat = unpack "^(W: |This may take a while|Checked through|$)"
       return $ unlines $ L.filter (not . (=~ pat) . unpack) (lines out)
 
-  putStr $ unpack $ topTen "FETCH" (directory dir) output "=="
+  putStr $ unpack $ topTen "FETCH" (dirAsFile dir) output "=="
 
 type CommitId = Text
 type BranchInfo = (CommitId, Text)
@@ -167,7 +172,7 @@ gitPushOrPull dir url pulls branch = do
 
     when (isJust remoteSha && fst branch /= fromJust remoteSha) $ do
       let logArgs     = ["--no-merges", "--oneline"]
-          branchLabel = T.concat [toTextIgnore (directory dir), "#", snd branch]
+          branchLabel = T.concat [toTextIgnore (dirAsFile dir), "#", snd branch]
           sha         = fromJust remoteSha
 
       pushLog <- git dir "log" (   logArgs
@@ -184,7 +189,7 @@ gitPushOrPull dir url pulls branch = do
 doGit :: FilePath -> Text -> [Text] -> Sh Text
 doGit dir com args = do
   let gitDir  = T.append "--git-dir=" (toTextIgnore dir)
-  let workDir = T.append "--work-tree=" (toTextIgnore (directory dir))
+  let workDir = T.append "--work-tree=" (toTextIgnore (dirAsFile dir))
   run "git" $ [gitDir, workDir, com] ++ args
 
 git :: FilePath -> Text -> [Text] -> IO Text
@@ -194,7 +199,7 @@ git dir com args = do
     code <- lastExitCode
     unless (code == 0) $ do
       err <- lastStderr
-      liftIO $ putStr $ unpack $ topTen "FAILED" (directory dir) err "##"
+      liftIO $ putStr $ unpack $ topTen "FAILED" (dirAsFile dir) err "##"
     return text
 
 gitMaybe :: FilePath -> Text -> [Text] -> IO (Maybe Text)
@@ -220,16 +225,22 @@ topTen category path content marker =
                 _ -> ["... (and " , (pack (show len)) , " more)\n"])
   where ls = lines content
 
-findDirectories :: Chan (Maybe FilePath) -> FilePath -> [FilePath] -> IO ()
-findDirectories c name dirs = do
-  validDirs <- shelly $ filterM test_d dirs
-  forM_ validDirs $ \dir -> do
-    xs <- shelly $ findByName name dir
-    mapM_ (writeChan c . Just) xs
-  writeChan c Nothing
+findDirectories :: Chan (Maybe FilePath) -> (FilePath -> Bool) -> [FilePath] -> IO ()
+findDirectories c pred dirs = do
+  -- This is a bit dense, so here's the breakdown:
+  --
+  -- 1. Given a list of `dirs', call test_d to find which are really there
+  -- 2. Bind the function after >>= to this list, which maps over each
+  --    directory, calling findFold on each one
+  -- 3. The fold calls writeChan for each directory matching our predicate
+  -- 4. When it's all done, write Nothing to the channel to let the caller
+  --    know we're all done.
 
-findByName :: FilePath -> FilePath -> Sh [FilePath]
-findByName name = findWhen $ return . (name ==) . filename
+  shelly $ filterM test_d dirs >>=
+    mapM_ (findFold (\_ path -> if pred path
+                                then liftIO . writeChan c . Just $ path
+                                else return ()) ())
+  writeChan c Nothing
 
 asText = unpack . toTextIgnore
 
