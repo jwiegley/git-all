@@ -52,7 +52,7 @@ gitAll = GitAll
     , arguments = def &= args &= typ "fetch | status" } &=
     summary gitAllSummary &=
     program "git-all" &=
-    help "Report the status of all Git repositories within a directory tree"
+    help "Fetch or report status of all Git repositories under the current directory"
 
 main :: IO ()
 main = do
