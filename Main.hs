@@ -24,6 +24,7 @@ import Filesystem.Path (directory, filename)
 import GHC.Conc
 import Shelly
 import System.Console.CmdArgs
+import System.Environment (getArgs, withArgs)
 import System.Log.Logger
 import Text.Regex.Posix
 
@@ -31,33 +32,26 @@ import Prelude
   hiding (FilePath, drop, replicate, lines, take, length, unlines, map)
 default (T.Text)
 
-version       = "1.0.0"
+version       = "1.0.1"
 copyright     = "2012"
 gitAllSummary = "git-all v" ++ version ++ ", (C) John Wiegley " ++ copyright
 
 data GitAll = GitAll
-    { fetch     :: Bool
-    , fetchonly :: Bool
-    , errors    :: Bool
-    , pulls     :: Bool
+    { pulls     :: Bool
     , untracked :: Bool
     , verbose   :: Bool
     , debug     :: Bool
-    , dirs      :: [String] }
+    , arguments :: [String] }
     deriving (Data, Typeable, Show, Eq)
 
 gitAll = GitAll
-    { fetch     = def &= name "f" &= help "Fetch from all remotes"
-    , fetchonly = def &= name "F" &= help "Only fetch, nothing else"
-    , errors    = def &= name "E" &= help "Only show Git failures"
-    , pulls     = def &= name "p" &= help "Include NEED PULL sections"
+    { pulls     = def &= name "p" &= help "Include NEED PULL sections"
     , untracked = def &= name "U" &= help "Display untracked files as possible changes"
     , verbose   = def &= name "v" &= help "Report progress verbosely"
     , debug     = def &= name "D" &= help "Report debug information"
-    , dirs      = def &= args &= typ "DIR..." } &=
+    , arguments = def &= args &= typ "fetch | status" } &=
     summary gitAllSummary &=
     program "git-all" &=
-    helpArg [explicit, name "h"] &=
     help "Report the status of all Git repositories within a directory tree"
 
 main :: IO ()
@@ -66,20 +60,20 @@ main = do
   GHC.Conc.setNumCapabilities 2
 
   -- process command-line options
-  opts <- cmdArgs gitAll
+  args <- getArgs
+  opts <- (if L.null args then withArgs ["--help"] else id) (cmdArgs gitAll)
+
   when (verbose opts) $ updateGlobalLogger "git-all" (setLevel INFO)
   when (debug opts)   $ updateGlobalLogger "git-all" (setLevel DEBUG)
 
-  -- Do a find in all directories (in sequence) in a separate thread, so that
-  -- the list of directories is accumulated while we work on them
+  -- Do a find in all directories (in sequence) in a separate thread, so
+  -- that the list of directories is accumulated while we work on them
   c <- newChan
-  let directories = L.map (fromText . pack) (dirs opts)
-  forkIO $ findDirectories c ((".git" ==) . filename)
-                           (if L.null directories then ["."] else directories)
+  forkIO $ findDirectories c ((".git" ==) . filename) ["."]
 
-  -- While readChan keeps returning `Just x', call `checkGitDirectory opts x'.
-  -- Once it returns Nothing, findDirectories is done and we can stop
-  whileJust_ (readChan c) (checkGitDirectory opts)
+  -- While readChan keeps returning `Just x', call `checkGitDirectory opts
+  -- x'.  Once it returns Nothing, findDirectories is done and we can stop
+  whileJust_ (readChan c) $ checkGitDirectory opts
 
 -- Primary logic
 
@@ -89,14 +83,15 @@ checkGitDirectory opts dir = do
 
   url <- gitMaybe dir "config" ["svn-remote.svn.url"]
 
-  when (fetch opts || fetchonly opts) $
-    gitFetch dir url
+  case L.head (arguments opts) of
+    "fetch" ->
+      gitFetch dir url
 
-  unless (fetchonly opts) $ do
-    branches <- gitLocalBranches dir
-    mapM_ (gitPushOrPull dir url (pulls opts)) branches
+    "status" -> do
+      branches <- gitLocalBranches dir
+      mapM_ (gitPushOrPull dir url (pulls opts)) branches
 
-    gitStatus dir (untracked opts)
+      gitStatus dir (untracked opts)
 
 -- Git command wrappers
 
