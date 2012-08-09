@@ -217,10 +217,11 @@ findDirectories c pred dirs = do
   --    know we're all done.
 
   shelly $ filterM test_d dirs >>=
-    mapM_ (findFold (\_ path -> when (pred path) $
-                                liftIO . writeChan c . Just $ path) ())
+    mapM_ (findFold (\_ p -> when (pred p) $
+                             liftIO . writeChan c . Just $ p) ())
   writeChan c Nothing
 
+asText :: FilePath -> String
 asText = unpack . toTextIgnore
 
 -- git-all.hs ends here
