@@ -1,5 +1,3 @@
-#!/usr/bin/env runhaskell
-
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
@@ -44,6 +42,7 @@ data GitAll = GitAll
     , arguments :: [String] }
     deriving (Data, Typeable, Show, Eq)
 
+gitAll :: GitAll
 gitAll = GitAll
     { pulls     = def &= name "p" &= help "Include NEED PULL sections"
     , untracked = def &= name "U" &= help "Display untracked files as possible changes"
@@ -60,8 +59,8 @@ main = do
   GHC.Conc.setNumCapabilities 2
 
   -- process command-line options
-  args <- getArgs
-  opts <- (if L.null args then withArgs ["--help"] else id) (cmdArgs gitAll)
+  mainArgs <- getArgs
+  opts <- (if L.null mainArgs then withArgs ["--help"] else id) (cmdArgs gitAll)
 
   when (verbose opts) $ updateGlobalLogger "git-all" (setLevel INFO)
   when (debug opts)   $ updateGlobalLogger "git-all" (setLevel DEBUG)
@@ -69,7 +68,7 @@ main = do
   -- Do a find in all directories (in sequence) in a separate thread, so
   -- that the list of directories is accumulated while we work on them
   c <- newChan
-  forkIO $ findDirectories c ((".git" ==) . filename) ["."]
+  _ <- forkIO $ findDirectories c ((".git" ==) . filename) ["."]
 
   -- While readChan keeps returning `Just x', call `checkGitDirectory opts
   -- x'.  Once it returns Nothing, findDirectories is done and we can stop
@@ -93,16 +92,20 @@ checkGitDirectory opts dir = do
 
       gitStatus dir (untracked opts)
 
+    unknown -> putStrLn $ "Unknown command: " ++ unknown
+
 -- Git command wrappers
 
+dirAsFile :: FilePath -> FilePath
 dirAsFile = fromText . T.init . toTextIgnore . directory
 
 gitStatus :: FilePath -> Bool -> IO ()
-gitStatus dir untracked = do
+gitStatus dir showUntracked = do
   changes <-
     git dir "status"
         [ "--porcelain"
-        , append "--untracked-files=" (if untracked then "normal" else "no") ]
+        , append "--untracked-files="
+                 (if showUntracked then "normal" else "no") ]
 
   putStr $ unpack $ topTen "STATUS" (dirAsFile dir) changes "=="
 
@@ -136,7 +139,7 @@ gitLocalBranches dir = do
         parseGitRefs [] = []
 
 gitPushOrPull :: FilePath -> Maybe Text -> Bool -> BranchInfo -> IO ()
-gitPushOrPull dir url pulls branch = do
+gitPushOrPull dir url doPulls branch = do
   remote <-
     gitMaybe dir "config" [T.concat ["branch.", snd branch, ".remote"]]
 
@@ -160,7 +163,7 @@ gitPushOrPull dir url pulls branch = do
                                 ++ [T.concat [sha, "..", fst branch], "--"])
       putStr $ unpack $ topTen "NEED PUSH" (fromText branchLabel) pushLog "=="
 
-      when pulls $ do
+      when doPulls $ do
         pullLog <- git dir "log" (   logArgs
                                   ++ [T.concat [fst branch, "..", sha], "--"])
         putStr $ unpack $ topTen "NEED PULL" (fromText branchLabel) pullLog "=="
@@ -168,15 +171,15 @@ gitPushOrPull dir url pulls branch = do
 -- Utility functions
 
 doGit :: FilePath -> Text -> [Text] -> Sh Text
-doGit dir com args = do
+doGit dir com gitArgs = do
   let gitDir  = T.append "--git-dir=" (toTextIgnore dir)
   let workDir = T.append "--work-tree=" (toTextIgnore (dirAsFile dir))
-  run "git" $ [gitDir, workDir, com] ++ args
+  run "git" $ [gitDir, workDir, com] ++ gitArgs
 
 git :: FilePath -> Text -> [Text] -> IO Text
-git dir com args =
+git dir com gitArgs =
   shelly $ silently $ errExit False $ do
-    text <- doGit dir com args
+    text <- doGit dir com gitArgs
     code <- lastExitCode
     unless (code == 0) $ do
       err <- lastStderr
@@ -184,9 +187,9 @@ git dir com args =
     return text
 
 gitMaybe :: FilePath -> Text -> [Text] -> IO (Maybe Text)
-gitMaybe dir cmd args =
+gitMaybe dir gitCmd gitArgs =
   shelly $ silently $ errExit False $ do
-    text <- doGit dir cmd args
+    text <- doGit dir gitCmd gitArgs
     code <- lastExitCode
     if code == 0
       then return . Just . L.head . lines $ text
@@ -194,19 +197,19 @@ gitMaybe dir cmd args =
 
 topTen :: Text -> FilePath -> Text -> Text -> Text
 topTen _ _ "" _ = ""
-topTen category path content marker =
+topTen category pathname content marker =
   T.concat $ [ "\n", marker, " ", category, " ", marker, " "
-             , toTextIgnore path, "\n"
+             , toTextIgnore pathname, "\n"
              -- , unlines (L.take 10 ls)
-             , unlines (L.map (take 80) (L.take 10 ls)) ]
-          ++ (let len = L.length (L.drop 10 ls) in
+             , unlines (L.map (take 80) (L.take 10 ls')) ]
+          ++ (let len = L.length (L.drop 10 ls') in
               case len of
                 0 -> []
                 _ -> ["... (and " , pack (show len) , " more)\n"])
-  where ls = lines content
+  where ls' = lines content
 
 findDirectories :: Chan (Maybe FilePath) -> (FilePath -> Bool) -> [FilePath] -> IO ()
-findDirectories c pred dirs = do
+findDirectories c findPred dirs = do
   -- This is a bit dense, so here's the breakdown:
   --
   -- 1. Given a list of `dirs', call test_d to find which are really there
@@ -217,7 +220,7 @@ findDirectories c pred dirs = do
   --    know we're all done.
 
   shelly $ filterM test_d dirs >>=
-    mapM_ (findFold (\_ p -> when (pred p) $
+    mapM_ (findFold (\_ p -> when (findPred p) $
                              liftIO . writeChan c . Just $ p) ())
   writeChan c Nothing
 
