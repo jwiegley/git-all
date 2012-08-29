@@ -12,6 +12,7 @@ module Main where
 -- A utility for determining which Git repositories need actions to be taken
 -- within them.
 
+import Control.Concurrent
 import Control.Concurrent.Chan
 import Control.Monad
 import Control.Monad.Loops
@@ -30,7 +31,7 @@ import Prelude
   hiding (FilePath, drop, replicate, lines, take, length, unlines, map)
 default (T.Text)
 
-version       = "1.0.1"
+version       = "1.1.0"
 copyright     = "2012"
 gitAllSummary = "git-all v" ++ version ++ ", (C) John Wiegley " ++ copyright
 
@@ -65,10 +66,11 @@ main = do
   when (verbose opts) $ updateGlobalLogger "git-all" (setLevel INFO)
   when (debug opts)   $ updateGlobalLogger "git-all" (setLevel DEBUG)
 
-  -- Do a find in all directories (in sequence) in a separate thread, so
-  -- that the list of directories is accumulated while we work on them
+  -- Do a find in all directories (in sequence) in a separate operating system
+  -- thread, so that the list of directories is accumulated while we work on
+  -- them
   c <- newChan
-  _ <- forkIO $ findDirectories c ((".git" ==) . filename) ["."]
+  _ <- forkOS $ findDirectories c ((".git" ==) . filename) ["."]
 
   -- While readChan keeps returning `Just x', call `checkGitDirectory opts
   -- x'.  Once it returns Nothing, findDirectories is done and we can stop
