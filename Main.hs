@@ -12,27 +12,31 @@ module Main where
 -- A utility for determining which Git repositories need actions to be taken
 -- within them.
 
-import Control.Concurrent
-import Control.Concurrent.Chan
-import Control.Monad
-import Control.Monad.Loops
+import           Control.Concurrent
+import           Control.Monad
+import           Control.Monad.Loops
 import qualified Data.List as L
-import Data.Maybe
-import Data.Text.Lazy as T
-import Filesystem.Path (directory, filename)
-import GHC.Conc
-import Shelly
-import System.Console.CmdArgs
-import System.Environment (getArgs, withArgs)
-import System.Log.Logger
-import Text.Regex.Posix
+import           Data.Maybe
+import           Data.Text.Lazy as T
+import           Filesystem.Path (directory, filename)
+import           GHC.Conc
+import           Prelude hiding
+                 (FilePath, drop, replicate, lines, take, length, unlines, map)
+import           Shelly
+import           System.Console.CmdArgs
+import           System.Environment (getArgs, withArgs)
+import           System.Log.Logger
+import           Text.Regex.Posix
 
-import Prelude
-  hiding (FilePath, drop, replicate, lines, take, length, unlines, map)
 default (T.Text)
 
+version :: String
 version       = "1.1.0"
+
+copyright :: String
 copyright     = "2012"
+
+gitAllSummary :: String
 gitAllSummary = "git-all v" ++ version ++ ", (C) John Wiegley " ++ copyright
 
 data GitAll = GitAll
@@ -210,7 +214,8 @@ topTen category pathname content marker =
                 _ -> ["... (and " , pack (show len) , " more)\n"])
   where ls' = lines content
 
-findDirectories :: Chan (Maybe FilePath) -> (FilePath -> Bool) -> [FilePath] -> IO ()
+findDirectories :: Chan (Maybe FilePath) -> (FilePath -> Bool) -> [FilePath]
+                -> IO ()
 findDirectories c findPred dirs = do
   -- This is a bit dense, so here's the breakdown:
   --
