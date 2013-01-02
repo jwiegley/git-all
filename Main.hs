@@ -62,7 +62,7 @@ gitAll = GitAll
                       &= help "Report progress verbosely"
     , debug     = def &= name "D"
                       &= help "Report debug information"
-    , arguments = def &= args &= typ "fetch | status" } &=
+    , arguments = def &= args &= typ "fetch | status" &= opt (T.unpack "status") } &=
     summary gitAllSummary &=
     program "git-all" &=
     help "Fetch or get status of all Git repos under the given directories"
@@ -70,10 +70,7 @@ gitAll = GitAll
 main :: IO ()
 main = do
   -- process command-line options
-  mainArgs <- getArgs
-  opts     <- withArgs (if L.null mainArgs then ["status"] else mainArgs)
-                       (cmdArgs gitAll)
-
+  opts <- cmdArgs gitAll
   _ <- GHC.Conc.setNumCapabilities $ case jobs opts of 0 -> 4; x -> x
 
   when (verbose opts) $ updateGlobalLogger "git-all" (setLevel INFO)
