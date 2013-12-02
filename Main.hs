@@ -1,3 +1,4 @@
+{-# LANGUAGE CPP #-}
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
@@ -5,7 +6,7 @@
 
 module Main where
 
--- git-all.hs, version 1.0 (2012-08-06)
+-- git-all.hs
 --
 -- by John Wiegley <johnw@newartisans.com>
 --
@@ -19,7 +20,12 @@ import           Control.Monad
 import           Control.Monad.Trans.State
 import qualified Data.List as L
 import           Data.Maybe
+import           Data.Monoid
+#if MIN_VERSION_shelly(1, 0, 0)
+import           Data.Text as T
+#else
 import           Data.Text.Lazy as T
+#endif
 import           Filesystem (listDirectory)
 import           Filesystem.Path (directory, filename)
 import           GHC.Conc
@@ -34,10 +40,10 @@ import           Text.Regex.Posix
 default (T.Text)
 
 version :: String
-version       = "1.3.0"
+version = "1.5.0"
 
 copyright :: String
-copyright     = "2012"
+copyright = "2012-2013"
 
 gitAllSummary :: String
 gitAllSummary = "git-all v" ++ version ++ ", (C) John Wiegley " ++ copyright
@@ -53,7 +59,7 @@ data GitAll = GitAll { jobs      :: Int
 gitAll :: GitAll
 gitAll = GitAll
     { jobs      = def &= name "j" &= typ "INT"
-                      &= help "Run INT concurrent finds at once (default: 2)"
+                      &= help "Run INT concurrent finds at once (default: 4)"
     , pulls     = def &= name "p"
                       &= help "Include NEED PULL sections"
     , untracked = def &= name "U"
@@ -62,10 +68,11 @@ gitAll = GitAll
                       &= help "Report progress verbosely"
     , debug     = def &= name "D"
                       &= help "Report debug information"
-    , arguments = def &= args &= typ "fetch | status" &= opt (T.unpack "status") } &=
-    summary gitAllSummary &=
-    program "git-all" &=
-    help "Fetch or get status of all Git repos under the given directories"
+    , arguments = def &= args &= typ "fetch | status"
+                      &= opt (T.unpack "status") }
+    &= summary gitAllSummary
+    &= program "git-all"
+    &= help "Fetch or get status of all Git repos under the given directories"
 
 main :: IO ()
 main = do
@@ -128,7 +135,7 @@ checkGitDirectory opts dir = do
       mapM_ (gitPushOrPull dir url (pulls opts)) =<< gitLocalBranches dir
       gitStatus dir (untracked opts)
 
-    unknown  -> putStrM $ T.concat [ "Unknown command: ", T.pack unknown, "\n" ]
+    command -> gitCommand dir (T.pack command)
 
 -- Git command wrappers
 
@@ -156,6 +163,11 @@ gitFetch dir url = do
       return $ T.unlines $ L.filter (not . (=~ pat) . unpack) (T.lines out)
 
   putStrM $ topTen "FETCH" (dirAsFile dir) output "=="
+
+gitCommand :: FilePath -> Text -> IOState ()
+gitCommand dir command = do
+  output <- git dir command []
+  putStrM $ topTen ("CMD[" <> command <> "]") (dirAsFile dir) output "=="
 
 type CommitId = Text
 type BranchInfo = (CommitId, Text)
@@ -203,9 +215,8 @@ gitPushOrPull dir url doPulls branch = do
 
 doGit :: FilePath -> Text -> [Text] -> Sh Text
 doGit dir com gitArgs = do
-  let gitDir  = T.append "--git-dir=" (toTextIgnore dir)
-  let workDir = T.append "--work-tree=" (toTextIgnore (dirAsFile dir))
-  run "git" $ [gitDir, workDir, com] ++ gitArgs
+  cd (dirAsFile dir)
+  run "git" (com:gitArgs)
 
 git :: FilePath -> Text -> [Text] -> IOState Text
 git dir com gitArgs = do
