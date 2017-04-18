@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
+
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
 module Main where
@@ -29,10 +30,9 @@ import           Data.Text.Lazy as T
 import           Filesystem (listDirectory)
 import           Filesystem.Path (directory, filename)
 import           GHC.Conc
-import           Prelude hiding (FilePath, catch)
-import           Shelly
+import           Prelude hiding (FilePath)
+import           Shelly hiding (cmd)
 import           System.Console.CmdArgs
-import           System.Environment (getArgs, withArgs)
 import           System.Log.Logger
 import           System.Posix.Files
 import           Text.Regex.Posix
@@ -135,7 +135,7 @@ checkGitDirectory opts dir = do
       mapM_ (gitPushOrPull dir url (pulls opts)) =<< gitLocalBranches dir
       gitStatus dir (untracked opts)
 
-    command -> gitCommand dir (T.pack command)
+    cmd -> gitCommand dir (T.pack cmd)
 
 -- Git command wrappers
 
@@ -165,9 +165,9 @@ gitFetch dir url = do
   putStrM $ topTen "FETCH" (dirAsFile dir) output "=="
 
 gitCommand :: FilePath -> Text -> IOState ()
-gitCommand dir command = do
-  output <- git dir command []
-  putStrM $ topTen ("CMD[" <> command <> "]") (dirAsFile dir) output "=="
+gitCommand dir cmd = do
+  output <- git dir cmd []
+  putStrM $ topTen ("CMD[" <> cmd <> "]") (dirAsFile dir) output "=="
 
 type CommitId = Text
 type BranchInfo = (CommitId, Text)
@@ -226,7 +226,7 @@ git dir com gitArgs = do
       code <- lastExitCode
       if code == 0
         then return $ Right text
-        else return . Left =<< lastStderr
+        else Left <$> lastStderr
   case result of
     Left err   -> do putStrM $ topTen "FAILED" (dirAsFile dir) err "##"
                      return ""
