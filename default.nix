@@ -33,6 +33,11 @@ let inherit (nixpkgs) pkgs;
                 overrides))
           .callCabal2nix (builtins.baseNameOf root) root {};
         in if provideDrv then modifier drv else (modifier drv).env;
+
+      enclosed-exceptions =
+        if compiler == "ghc842"
+        then dontCheck super.enclosed-exceptions
+        else enclosed-exceptions;
     };
   });
 
