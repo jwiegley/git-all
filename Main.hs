@@ -86,9 +86,9 @@ main = do
   -- Do a find in all directories (in sequence) in a separate operating system
   -- thread, so that the list of directories is accumulated while we work on
   -- them
-  c    <- newChan
+  c    <- newChan :: IO (Chan (Maybe (FilePath, FilePath)))
   _    <- forkOS $ do
-    parallel_ $ L.map (findDirs c 0 ((".git" ==) . filename))
+    parallel_ $ L.map (findDirsContaining c 0)
                       (let xs = L.tail (arguments opts)
                        in if L.null xs
                           then ["."]
@@ -102,14 +102,15 @@ main = do
                     (catMaybes' dirs)
   stopGlobalPool
 
-  where runGitCmd :: GitAll -> FilePath -> IO Text
-        runGitCmd opts = flip execStateT "" . checkGitDirectory opts
+  where
+    runGitCmd :: GitAll -> (FilePath, FilePath) -> IO Text
+    runGitCmd opts = flip execStateT "" . uncurry (checkGitDirectory opts)
 
-        catMaybes' :: [Maybe a] -> [a]
-        catMaybes' [] = []
-        catMaybes' (x:xs) = case x of
-          Nothing -> []
-          Just y  -> y : catMaybes' xs
+    catMaybes' :: [Maybe a] -> [a]
+    catMaybes' [] = []
+    catMaybes' (x:xs) = case x of
+      Nothing -> []
+      Just y  -> y : catMaybes' xs
 
 -- Primary logic
 
@@ -121,60 +122,64 @@ putStrM = modify . T.append
 toString :: FilePath -> String
 toString = unpack . toTextIgnore
 
-checkGitDirectory :: GitAll -> FilePath -> IOState ()
-checkGitDirectory opts dir = do
-  liftIO $ debugM "git-all" $ "Scanning " ++ toString dir
+fromString :: String -> FilePath
+fromString = fromText . pack
 
-  url <- gitMaybe dir "config" ["svn-remote.svn.url"]
+checkGitDirectory :: GitAll -> FilePath -> FilePath -> IOState ()
+checkGitDirectory opts gitDir workTree = do
+  liftIO $ debugM "git-all" $
+      "Scanning " ++ toString gitDir ++ " => " ++ toString workTree
+
+  url <- gitMaybe gitDir workTree "config" ["svn-remote.svn.url"]
 
   case L.head (arguments opts) of
     "fetch"  ->
-      gitFetch dir url
+      gitFetch gitDir workTree url
 
     "status" -> do
-      mapM_ (gitPushOrPull dir url (pulls opts)) =<< gitLocalBranches dir
-      gitStatus dir (untracked opts)
+      mapM_ (gitPushOrPull gitDir workTree url (pulls opts))
+          =<< gitLocalBranches gitDir workTree
+      gitStatus gitDir workTree (untracked opts)
 
-    cmd -> gitCommand dir (T.pack cmd)
+    cmd -> gitCommand gitDir workTree (T.pack cmd)
 
 -- Git command wrappers
 
-dirAsFile :: FilePath -> FilePath
-dirAsFile = fromText . T.init . toTextIgnore . directory
-
-gitStatus :: FilePath -> Bool -> IOState ()
-gitStatus dir showUntracked = do
+gitStatus :: FilePath -> FilePath -> Bool -> IOState ()
+gitStatus gitDir workTree showUntracked = do
   changes <-
-    git dir "status" [ "--porcelain"
-                     , append "--untracked-files="
-                              (if showUntracked then "normal" else "no") ]
+    git gitDir workTree "status"
+        [ "--porcelain"
+        , append "--untracked-files="
+            (if showUntracked then "normal" else "no") ]
 
-  putStrM $ topTen "STATUS" (dirAsFile dir) changes "=="
+  putStrM $ topTen "STATUS" workTree changes "=="
 
-gitFetch :: FilePath -> Maybe Text -> IOState ()
-gitFetch dir url = do
+gitFetch :: FilePath -> FilePath -> Maybe Text -> IOState ()
+gitFetch gitDir workTree url = do
   output <-
     if isNothing url
-    then git dir "fetch" ["-q", "--progress", "--all", "--prune", "--tags"]
+    then git gitDir workTree "fetch"
+             ["-q", "--progress", "--all", "--prune", "--tags"]
     else do
-      out <- git dir "svn" ["fetch"]
+      out <- git gitDir workTree "svn" ["fetch"]
       -- jww (2012-08-06): Why doesn't =~ work on Data.Text.Lazy.Text?
       let pat = unpack "^(W: |This may take a while|Checked through|$)"
       return $ T.unlines $ L.filter (not . (=~ pat) . unpack) (T.lines out)
 
-  putStrM $ topTen "FETCH" (dirAsFile dir) output "=="
+  putStrM $ topTen "FETCH" workTree output "=="
 
-gitCommand :: FilePath -> Text -> IOState ()
-gitCommand dir cmd = do
-  output <- git dir cmd []
-  putStrM $ topTen ("CMD[" <> cmd <> "]") (dirAsFile dir) output "=="
+gitCommand :: FilePath -> FilePath -> Text -> IOState ()
+gitCommand gitDir workTree cmd = do
+  output <- git gitDir workTree cmd []
+  putStrM $ topTen ("CMD[" <> cmd <> "]") workTree output "=="
 
 type CommitId = Text
 type BranchInfo = (CommitId, Text)
 
-gitLocalBranches :: FilePath -> IOState [BranchInfo]
-gitLocalBranches dir = do
-  output <- git dir "for-each-ref" ["refs/heads/"]
+gitLocalBranches :: FilePath -> FilePath -> IOState [BranchInfo]
+gitLocalBranches gitDir workTree = do
+  output <- git gitDir workTree "for-each-ref" ["refs/heads/"]
   return $ parseGitRefs (T.lines output)
 
   -- Each line is of the form: "<HASH> commit refs/heads/<NAME>"
@@ -183,59 +188,62 @@ gitLocalBranches dir = do
           (L.head words', T.drop 11 (words' !! 2)) : parseGitRefs xs
           where words' = T.words x
 
-gitPushOrPull :: FilePath -> Maybe Text -> Bool -> BranchInfo -> IOState ()
-gitPushOrPull dir url doPulls branch = do
-  remote <- gitMaybe dir "config" [T.concat ["branch.", snd branch, ".remote"]]
+gitPushOrPull :: FilePath -> FilePath -> Maybe Text -> Bool -> BranchInfo -> IOState ()
+gitPushOrPull gitDir workTree url doPulls branch = do
+  remote <- gitMaybe gitDir workTree "config"
+      [T.concat ["branch.", snd branch, ".remote"]]
   when (isJust remote || isJust url) $ do
     let branchName = T.concat [fromJust remote, "/", snd branch]
     remoteSha <- if isJust remote
                  then
-                   gitMaybe dir "rev-parse" [branchName]
+                   gitMaybe gitDir workTree "rev-parse" [branchName]
                  else do
-                   trunk <- gitMaybe dir "rev-parse" ["trunk"]
+                   trunk <- gitMaybe gitDir workTree "rev-parse" ["trunk"]
                    case trunk of
-                     Nothing -> gitMaybe dir "rev-parse" ["git-svn"]
+                     Nothing -> gitMaybe gitDir workTree "rev-parse" ["git-svn"]
                      Just _  -> return trunk
 
     when (isJust remoteSha && fst branch /= fromJust remoteSha) $ do
       let logArgs     = ["--no-merges", "--oneline"]
-          branchLabel = T.concat [toTextIgnore (dirAsFile dir), "#", snd branch]
+          branchLabel = T.concat [toTextIgnore gitDir, "#", snd branch]
           sha         = fromJust remoteSha
 
-      pushLog <- git dir "log" (  logArgs
-                               ++ [T.concat [sha, "..", fst branch], "--"])
+      pushLog <- git gitDir workTree "log"
+          (logArgs ++ [T.concat [sha, "..", fst branch], "--"])
       putStrM $ topTen "NEED PUSH" (fromText branchLabel) pushLog "=="
 
       when doPulls $ do
-        pullLog <- git dir "log" (  logArgs
-                                 ++ [T.concat [fst branch, "..", sha], "--"])
+        pullLog <- git gitDir workTree "log"
+            (logArgs ++ [T.concat [fst branch, "..", sha], "--"])
         putStrM $ topTen "NEED PULL" (fromText branchLabel) pullLog "=="
 
 -- Utility functions
 
-doGit :: FilePath -> Text -> [Text] -> Sh Text
-doGit dir com gitArgs = do
-  cd (dirAsFile dir)
-  run "git" (com:gitArgs)
+doGit :: FilePath -> FilePath -> Text -> [Text] -> Sh Text
+doGit gitDir workTree com gitArgs = do
+    run "git" ("--git-dir":pack (toString gitDir)
+               :"--work-tree":pack (toString workTree)
+               :com:gitArgs)
 
-git :: FilePath -> Text -> [Text] -> IOState Text
-git dir com gitArgs = do
+git :: FilePath -> FilePath -> Text -> [Text] -> IOState Text
+git gitDir workTree com gitArgs = do
   result <-
     shelly $ silently $ errExit False $ do
-      text <- doGit dir com gitArgs
+      text <- doGit gitDir workTree com gitArgs
       code <- lastExitCode
       if code == 0
         then return $ Right text
         else Left <$> lastStderr
   case result of
-    Left err   -> do putStrM $ topTen "FAILED" (dirAsFile dir) err "##"
-                     return ""
+    Left err   -> do
+        putStrM $ topTen "FAILED" (workTree <> " <= " <> gitDir) err "##"
+        return ""
     Right text -> return text
 
-gitMaybe :: FilePath -> Text -> [Text] -> IOState (Maybe Text)
-gitMaybe dir gitCmd gitArgs =
+gitMaybe :: FilePath -> FilePath -> Text -> [Text] -> IOState (Maybe Text)
+gitMaybe gitDir workTree gitCmd gitArgs =
   shelly $ silently $ errExit False $ do
-    text <- doGit dir gitCmd gitArgs
+    text <- doGit gitDir workTree gitCmd gitArgs
     code <- lastExitCode
     if code == 0
       then return . Just . L.head . T.lines $ text
@@ -254,28 +262,40 @@ topTen category pathname content marker =
                 _ -> ["... (and " , pack (show len) , " more)\n"])
   where ls' = T.lines content
 
-findDirsW :: Chan (Maybe FilePath) -> Int -> (FilePath -> Bool) -> FilePath
-          -> IO ()
-findDirsW c curDepth findPred p =
-  catch (findDirs c curDepth findPred p)
+findDirsContainingW
+    :: Chan (Maybe (FilePath, FilePath))
+    -> Int
+    -> FilePath
+    -> IO ()
+findDirsContainingW c curDepth p =
+  catch (findDirsContaining c curDepth p)
         (\e -> (e :: IOException) `seq` return ())
 
-findDirs :: Chan (Maybe FilePath) -> Int -> (FilePath -> Bool) -> FilePath
-         -> IO ()
-findDirs c curDepth findPred p = do
+findDirsContaining
+    :: Chan (Maybe (FilePath, FilePath))
+    -> Int
+    -> FilePath
+    -> IO ()
+findDirsContaining c curDepth p = do
   status <- if curDepth == 0
             then getFileStatus (toString p)
             else getSymbolicLinkStatus (toString p)
 
+  when (filename p == ".git") $ do
+    when (isRegularFile status) $ do
+      t <- readFile (toString p)
+      when ("gitdir: " `L.isPrefixOf` t) $
+        writeChan c (Just (directory p </> fromText (T.strip (T.pack (L.drop 8 t))),
+                           directory p))
+    when (isDirectory status) $
+      writeChan c (Just (p, directory p))
+
   when (isDirectory status &&
-       filename p `notElem` ["CVS", ".svn", ".deps", "_darcs", "CMakeFiles"]) $
-    if findPred p
-      then writeChan c (Just p)
-      else do
-        files <- listDirectory p
-        let func = findDirsW c (curDepth + 1) findPred
-        if curDepth == 0
-          then parallel_ $ L.map func files
-          else mapM_ func files
+        filename p `notElem` ["CVS", ".svn", ".deps", "_darcs", "CMakeFiles"]) $ do
+    files <- listDirectory p
+    let func = findDirsContainingW c (curDepth + 1)
+    if curDepth == 0
+      then parallel_ $ L.map func files
+      else mapM_ func files
 
 -- git-all.hs ends here
