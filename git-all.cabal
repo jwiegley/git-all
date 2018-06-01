@@ -1,6 +1,6 @@
 Name: git-all
 
-Version:  1.5.0
+Version:  1.6.0
 Synopsis: Determine which Git repositories need actions to be taken
 
 Description: A utility for determining which Git repositories need actions to be
