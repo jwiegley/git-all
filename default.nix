@@ -14,20 +14,17 @@
 , mkDerivation ? null
 }:
 
-let
-  haskellPackages' = pkgs.haskell.packages.${compiler};
-
-  haskellPackages = pkgs.lib.fix (this: haskellPackages'.override {
-    overrides = with pkgs.haskell.lib; self: super: {
-      enclosed-exceptions =
-        if compiler == "ghc843"
-        then dontCheck super.enclosed-exceptions
-        else super.enclosed-exceptions;
-    };
-  });
+let haskellPackages = pkgs.haskell.packages.${compiler};
 
 in haskellPackages.developPackage {
   root = ./.;
+
+  overrides = with pkgs.haskell.lib; self: super: {
+    enclosed-exceptions =
+      if compiler == "ghc843"
+      then dontCheck super.enclosed-exceptions
+      else super.enclosed-exceptions;
+  };
 
   source-overrides = {
   };
