@@ -2,6 +2,7 @@
 {-# LANGUAGE DeriveDataTypeable #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE ExtendedDefaultRules #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 
 {-# OPTIONS_GHC -fno-warn-type-defaults #-}
 
@@ -21,18 +22,16 @@ import           Control.Monad
 import           Control.Monad.Trans.State
 import qualified Data.List as L
 import           Data.Maybe
-import           Data.Monoid
 #if MIN_VERSION_shelly(1, 0, 0)
 import           Data.Text as T
 #else
 import           Data.Text.Lazy as T
 #endif
-import           Filesystem (listDirectory)
-import           Filesystem.Path (directory, filename)
 import           GHC.Conc
-import           Prelude hiding (FilePath)
 import           Shelly hiding (cmd)
 import           System.Console.CmdArgs
+import           System.Directory
+import           System.FilePath.Posix hiding ((</>))
 import           System.Log.Logger
 import           System.Posix.Files
 import           Text.Regex.Posix
@@ -90,21 +89,21 @@ main = do
   _    <- forkOS $ do
     parallel_ $ L.map (findDirsContaining c 0)
                       (let xs = L.tail (arguments opts)
-                       in if L.null xs
-                          then ["."]
-                          else L.map (fromText . pack) xs)
+                       in if L.null xs then ["."] else xs)
     writeChan c Nothing
   dirs <- getChanContents c
 
   -- While readChan keeps returning `Just x', call `checkGitDirectory opts
   -- x'.  Once it returns Nothing, findDirs is done and we can stop
-  parallel_ $ L.map (runGitCmd opts >=> putStr . unpack)
-                    (catMaybes' dirs)
+  mapM_ (runGitCmd opts >=> putStr . unpack)
+        (catMaybes' dirs)
   stopGlobalPool
 
   where
     runGitCmd :: GitAll -> (FilePath, FilePath) -> IO Text
-    runGitCmd opts = flip execStateT "" . uncurry (checkGitDirectory opts)
+    runGitCmd opts entry = do
+      debugM "git-all" $ "Running command for " ++ show entry
+      execStateT (uncurry (checkGitDirectory opts) entry) ""
 
     catMaybes' :: [Maybe a] -> [a]
     catMaybes' [] = []
@@ -119,16 +118,10 @@ type IOState = StateT Text IO
 putStrM :: Text -> IOState ()
 putStrM = modify . T.append
 
-toString :: FilePath -> String
-toString = unpack . toTextIgnore
-
-fromString :: String -> FilePath
-fromString = fromText . pack
-
 checkGitDirectory :: GitAll -> FilePath -> FilePath -> IOState ()
 checkGitDirectory opts gitDir workTree = do
   liftIO $ debugM "git-all" $
-      "Scanning " ++ toString gitDir ++ " => " ++ toString workTree
+      "Scanning " ++ gitDir ++ " => " ++ workTree
 
   url <- gitMaybe gitDir workTree "config" ["svn-remote.svn.url"]
 
@@ -221,9 +214,10 @@ gitPushOrPull gitDir workTree url doPulls branch = do
 
 doGit :: FilePath -> FilePath -> Text -> [Text] -> Sh Text
 doGit gitDir workTree com gitArgs = do
-    run "git" ("--git-dir":pack (toString gitDir)
-               :"--work-tree":pack (toString workTree)
-               :com:gitArgs)
+    liftIO $ debugM "git-all" $ "git " ++ show args_
+    run "git" args_
+  where
+    args_ = "--git-dir":pack gitDir:"--work-tree":pack workTree:com:gitArgs
 
 git :: FilePath -> FilePath -> Text -> [Text] -> IOState Text
 git gitDir workTree com gitArgs = do
@@ -278,20 +272,26 @@ findDirsContaining
     -> IO ()
 findDirsContaining c curDepth p = do
   status <- if curDepth == 0
-            then getFileStatus (toString p)
-            else getSymbolicLinkStatus (toString p)
+            then getFileStatus p
+            else getSymbolicLinkStatus p
 
-  when (filename p == ".git") $ do
+  debugM "git-all" $ "p = " ++ show p
+  debugM "git-all" $ "takeFileName p = " ++ show (takeFileName p)
+  when (takeFileName p == ".git") $ do
+    debugM "git-all" "is .git"
     when (isRegularFile status) $ do
-      t <- readFile (toString p)
+      debugM "git-all" ".git is regular file"
+      t <- readFile p
       when ("gitdir: " `L.isPrefixOf` t) $
-        writeChan c (Just (directory p </> fromText (T.strip (T.pack (L.drop 8 t))),
-                           directory p))
-    when (isDirectory status) $
-      writeChan c (Just (p, directory p))
+        writeChan c (Just (takeDirectory p </> fromText (T.strip (T.pack (L.drop 8 t))),
+                           takeDirectory p))
+    when (isDirectory status) $ do
+      debugM "git-all" ".git is directory"
+      writeChan c (Just (p, takeDirectory p))
 
   when (isDirectory status &&
-        filename p `notElem` ["CVS", ".svn", ".deps", "_darcs", "CMakeFiles"]) $ do
+        takeFileName p `notElem` ["CVS", ".svn", ".deps", "_darcs", "CMakeFiles"]) $ do
+    debugM "git-all" $ p ++ " is not a special directory, recursing"
     files <- listDirectory p
     let func = findDirsContainingW c (curDepth + 1)
     if curDepth == 0

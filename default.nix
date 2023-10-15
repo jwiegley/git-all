@@ -1,9 +1,9 @@
-{ compiler    ? "ghc822"
+{ compiler    ? "ghc882"
 , doBenchmark ? false
 , doTracing   ? false
 , doStrict    ? false
-, rev         ? "d1ae60cbad7a49874310de91cd17708b042400c8"
-, sha256      ? "0a1w4702jlycg2ab87m7n8frjjngf0cis40lyxm3vdwn7p4fxikz"
+, rev         ? "24c765c744ba856700db92ab94ef9c695d73f95f"
+, sha256      ? "0ak482k4jsnnmipmc038fla5ywr9h01xs91sjkx35wkkxcs2lc23"
 , pkgs        ? import (builtins.fetchTarball {
     url = "https://github.com/NixOS/nixpkgs/archive/${rev}.tar.gz";
     inherit sha256; }) {
