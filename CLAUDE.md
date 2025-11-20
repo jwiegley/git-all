@@ -101,10 +101,9 @@ The `topTen` function shows first 10 lines (80 chars each) plus count of remaini
 
 ## Project Structure
 ```
-git-all.cabal         # Version 1.7.0, executable only, no tests
+git-all.cabal         # Version 1.8.0, executable only, no tests
 Main.hs               # Version constant: "1.5.0" (discrepancy)
 flake.nix             # GHC 9.10, haskell.nix, includes HLS
-default.nix           # GHC 8.8.2, legacy support
 ```
 
 ## Notable Design Decisions
