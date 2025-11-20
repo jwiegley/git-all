@@ -88,8 +88,10 @@ main = do
   c    <- newChan :: IO (Chan (Maybe (FilePath, FilePath)))
   _    <- forkOS $ do
     parallel_ $ L.map (findDirsContaining c 0)
-                      (let xs = L.tail (arguments opts)
-                       in if L.null xs then ["."] else xs)
+                      (let xs = case arguments opts of
+                                  [] -> ["."]
+                                  (_:rest) -> if L.null rest then ["."] else rest
+                       in xs)
     writeChan c Nothing
   dirs <- getChanContents c
 
@@ -125,16 +127,17 @@ checkGitDirectory opts gitDir workTree = do
 
   url <- gitMaybe gitDir workTree "config" ["svn-remote.svn.url"]
 
-  case L.head (arguments opts) of
-    "fetch"  ->
+  case arguments opts of
+    []       -> gitStatus gitDir workTree (untracked opts)
+    ("fetch":_)  ->
       gitFetch gitDir workTree url
 
-    "status" -> do
+    ("status":_) -> do
       mapM_ (gitPushOrPull gitDir workTree url (pulls opts))
           =<< gitLocalBranches gitDir workTree
       gitStatus gitDir workTree (untracked opts)
 
-    cmd -> gitCommand gitDir workTree (T.pack cmd)
+    (cmd:_) -> gitCommand gitDir workTree (T.pack cmd)
 
 -- Git command wrappers
 
@@ -178,8 +181,9 @@ gitLocalBranches gitDir workTree = do
   -- Each line is of the form: "<HASH> commit refs/heads/<NAME>"
   where parseGitRefs []     = []
         parseGitRefs (x:xs) =
-          (L.head words', T.drop 11 (words' !! 2)) : parseGitRefs xs
-          where words' = T.words x
+          case T.words x of
+            (hash:_:ref:_) -> (hash, T.drop 11 ref) : parseGitRefs xs
+            _ -> parseGitRefs xs  -- Skip malformed lines
 
 gitPushOrPull :: FilePath -> FilePath -> Maybe Text -> Bool -> BranchInfo -> IOState ()
 gitPushOrPull gitDir workTree url doPulls branch = do
@@ -240,7 +244,9 @@ gitMaybe gitDir workTree gitCmd gitArgs =
     text <- doGit gitDir workTree gitCmd gitArgs
     code <- lastExitCode
     if code == 0
-      then return . Just . L.head . T.lines $ text
+      then return $ case T.lines text of
+                      [] -> Nothing
+                      (firstLine:_) -> Just firstLine
       else return Nothing
 
 topTen :: Text -> FilePath -> Text -> Text -> Text
@@ -293,7 +299,7 @@ findDirsContaining c curDepth p = do
         takeFileName p `notElem` ["CVS", ".svn", ".deps", "_darcs", "CMakeFiles"]) $ do
     debugM "git-all" $ p ++ " is not a special directory, recursing"
     files <- listDirectory p
-    let func = findDirsContainingW c (curDepth + 1)
+    let func file = findDirsContainingW c (curDepth + 1) (p </> file)
     if curDepth == 0
       then parallel_ $ L.map func files
       else mapM_ func files
