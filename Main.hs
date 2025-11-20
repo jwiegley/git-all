@@ -102,7 +102,7 @@ main = do
   where
     runGitCmd :: GitAll -> (FilePath, FilePath) -> IO Text
     runGitCmd opts entry = do
-      debugM "git-all" $ "Running command for " ++ show entry
+      debugM "git-all" $ "Running command for " ++ Prelude.show entry
       execStateT (uncurry (checkGitDirectory opts) entry) ""
 
     catMaybes' :: [Maybe a] -> [a]
@@ -214,7 +214,7 @@ gitPushOrPull gitDir workTree url doPulls branch = do
 
 doGit :: FilePath -> FilePath -> Text -> [Text] -> Sh Text
 doGit gitDir workTree com gitArgs = do
-    liftIO $ debugM "git-all" $ "git " ++ show args_
+    liftIO $ debugM "git-all" $ "git " ++ Prelude.show args_
     run "git" args_
   where
     args_ = "--git-dir":pack gitDir:"--work-tree":pack workTree:com:gitArgs
@@ -253,7 +253,7 @@ topTen category pathname content marker =
           ++ (let len = L.length (L.drop 10 ls') in
               case len of
                 0 -> []
-                _ -> ["... (and " , pack (show len) , " more)\n"])
+                _ -> ["... (and " , pack (Prelude.show len) , " more)\n"])
   where ls' = T.lines content
 
 findDirsContainingW
@@ -275,8 +275,8 @@ findDirsContaining c curDepth p = do
             then getFileStatus p
             else getSymbolicLinkStatus p
 
-  debugM "git-all" $ "p = " ++ show p
-  debugM "git-all" $ "takeFileName p = " ++ show (takeFileName p)
+  debugM "git-all" $ "p = " ++ Prelude.show p
+  debugM "git-all" $ "takeFileName p = " ++ Prelude.show (takeFileName p)
   when (takeFileName p == ".git") $ do
     debugM "git-all" "is .git"
     when (isRegularFile status) $ do

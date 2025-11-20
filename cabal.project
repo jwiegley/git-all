@@ -1,0 +1,9 @@
+packages: .
+
+-- Use a recent index-state that has compatible versions
+index-state: 2024-11-01T00:00:00Z
+
+-- Allow parallel-io to build with containers 0.7 (shipped with GHC 9.10)
+-- parallel-io has not been updated but works fine with containers 0.7
+allow-newer:
+  parallel-io:containers
