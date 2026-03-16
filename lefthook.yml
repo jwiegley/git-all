@@ -1,0 +1,29 @@
+pre-commit:
+  parallel: true
+  commands:
+    fourmolu:
+      glob: "*.hs"
+      run: "if command -v fourmolu >/dev/null 2>&1; then fourmolu --mode check {staged_files}; fi"
+    hlint:
+      glob: "*.hs"
+      run: "if command -v hlint >/dev/null 2>&1; then hlint {staged_files}; fi"
+    build:
+      glob: "*.{hs,cabal,nix}"
+      run: cabal build -j 2>&1
+    test:
+      glob: "*.{hs,cabal}"
+      run: cabal test -j 2>&1
+    nix-check:
+      glob: "*.{hs,cabal,nix}"
+      run: nix flake check --no-warn-dirty --allow-import-from-derivation 2>&1
+    # Uncomment when test coverage baseline is established:
+    # coverage:
+    #   glob: "*.{hs,cabal}"
+    #   run: |
+    #     cabal test --enable-coverage 2>&1
+    #     hpc report dist-newstyle/build/*/ghc-*/git-all-*/t/git-all-test/hpc/vanilla/tix/git-all-test/git-all-test.tix 2>&1
+    # Uncomment when performance baseline is established:
+    # benchmark:
+    #   glob: "*.{hs,cabal}"
+    #   run: |
+    #     cabal bench 2>&1
