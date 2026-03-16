@@ -8,7 +8,7 @@ Description: A utility for determining which Git repositories need actions to be
 
 Homepage:           https://github.com/jwiegley/git-all
 License:            BSD3
-License-file:       LICENSE
+License-file:       LICENSE.md
 Author:             John Wiegley
 Maintainer:         John Wiegley <johnw@newartisans.com>
 Category:           Development
@@ -19,11 +19,19 @@ Extra-Source-Files: README.md
 
 Executable git-all
     Main-is: Main.hs
-    Ghc-options: -threaded
+    Ghc-options: -threaded -Wall -Werror
 
     Build-depends: base >= 4 && < 5, shelly, cmdargs, hslogger, regex-posix,
                    directory, transformers, parallel-io, text, unix, filepath
     default-language: Haskell2010
+
+Test-Suite git-all-test
+    Type: exitcode-stdio-1.0
+    Main-is: Spec.hs
+    Hs-source-dirs: test
+    Build-depends: base >= 4 && < 5
+    Default-language: Haskell2010
+    Ghc-options: -Wall
 
 Source-repository head
   type:     git

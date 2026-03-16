@@ -1,6 +1,13 @@
 {
   description = "Utility for getting status of a Git repository tree";
 
+  nixConfig = {
+    extra-substituters = [ "https://cache.iog.io" ];
+    extra-trusted-public-keys = [
+      "hydra.iohk.io:f/Ea+s+dFdN+3Y/G+FDgSq+a5NEWhJGzdjvKNGv0/EQ="
+    ];
+  };
+
   inputs = {
     nixpkgs.follows = "haskellNix/nixpkgs-unstable";
     haskellNix.url = "github:input-output-hk/haskell.nix";
@@ -14,18 +21,13 @@
           inherit system overlays;
           inherit (haskellNix) config;
         };
-        flake = pkgs.git-all.flake {
-        };
         overlays = [ haskellNix.overlay
           (final: prev: {
             git-all =
               final.haskell-nix.project' {
                 src = ./.;
                 compiler-nix-name = "ghc910";
-                # Use a Hackage index state with compatible package versions
                 index-state = "2024-11-01T00:00:00Z";
-                # The cabal.project file contains allow-newer for parallel-io:containers
-                # to enable building with GHC 9.10 (which ships with containers 0.7)
                 shell = {
                   tools = {
                     cabal = {};
@@ -33,15 +35,66 @@
                   };
                   buildInputs = with pkgs; [
                     pkg-config
+                    haskellPackages.hlint
+                    haskellPackages.fourmolu
+                    lefthook
                   ];
-                  # Disable hoogle to avoid warp/http2 compilation issues
                   withHoogle = false;
                 };
               };
           })
         ];
+        flake = pkgs.git-all.flake {};
       in flake // {
-        packages.default = flake.packages."git-all:exe:git-all";
+        packages = flake.packages // {
+          default = flake.packages."git-all:exe:git-all";
+        };
+
         devShells.default = flake.devShells.default;
+
+        checks = (flake.checks or {}) // {
+          build = flake.packages."git-all:exe:git-all";
+
+          hlint = pkgs.runCommand "hlint-check" {
+            nativeBuildInputs = [ pkgs.haskellPackages.hlint ];
+          } ''
+            hlint ${self}/Main.hs
+            touch $out
+          '';
+
+          fourmolu = pkgs.runCommand "fourmolu-check" {
+            nativeBuildInputs = [ pkgs.haskellPackages.fourmolu ];
+          } ''
+            fourmolu --mode check \
+              --config ${self}/fourmolu.yaml \
+              ${self}/Main.hs ${self}/test/Spec.hs
+            touch $out
+          '';
+        };
+
+        # Profiling configuration (uncomment in modules to enable):
+        # modules = [{
+        #   enableLibraryProfiling = true;
+        #   enableProfiling = true;
+        # }];
+
+        apps = {
+          default = {
+            type = "program";
+            program = "${flake.packages."git-all:exe:git-all"}/bin/git-all";
+          };
+          format = {
+            type = "program";
+            program = "${pkgs.writeShellScript "git-all-format" ''
+              exec ${pkgs.haskellPackages.fourmolu}/bin/fourmolu --mode inplace "$@"
+            ''}";
+          };
+          lint = {
+            type = "program";
+            program = "${pkgs.writeShellScript "git-all-lint" ''
+              exec ${pkgs.haskellPackages.hlint}/bin/hlint "$@"
+            ''}";
+          };
+        };
       });
 }
