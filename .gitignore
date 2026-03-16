@@ -2,3 +2,12 @@
 /git-all.hi
 /.shelly/
 /dist/
+/dist-newstyle/
+/result
+*.hi
+*.o
+*.prof
+*.hp
+*.eventlog
+*.tix
+.hpc/
