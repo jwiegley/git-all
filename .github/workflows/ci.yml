@@ -17,4 +17,9 @@ jobs:
       - uses: DeterminateSystems/magic-nix-cache-action@main
 
       - name: Run all checks (build, lint, format, tests)
-        run: nix flake check --accept-flake-config --system x86_64-linux
+        run: |
+          nix build --accept-flake-config --no-link \
+            .#checks.x86_64-linux.build \
+            .#checks.x86_64-linux.hlint \
+            .#checks.x86_64-linux.fourmolu \
+            '.#checks.x86_64-linux."git-all:test:git-all-test"'
