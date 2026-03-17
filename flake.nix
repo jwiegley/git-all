@@ -80,17 +80,17 @@
 
         apps = {
           default = {
-            type = "program";
+            type = "app";
             program = "${flake.packages."git-all:exe:git-all"}/bin/git-all";
           };
           format = {
-            type = "program";
+            type = "app";
             program = "${pkgs.writeShellScript "git-all-format" ''
               exec ${pkgs.haskellPackages.fourmolu}/bin/fourmolu --mode inplace "$@"
             ''}";
           };
           lint = {
-            type = "program";
+            type = "app";
             program = "${pkgs.writeShellScript "git-all-lint" ''
               exec ${pkgs.haskellPackages.hlint}/bin/hlint "$@"
             ''}";
